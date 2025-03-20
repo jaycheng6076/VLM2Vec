@@ -117,6 +117,7 @@ class TrainingArguments(TrainingArguments):
         default=2, metadata={"help": "query side subset size"})
     gc_p_chunk_size: int = field(
         default=2, metadata={"help": "target side subset size"})
+    report_to: str = "wandb"
 
 
 @dataclass

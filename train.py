@@ -15,6 +15,8 @@ from src.model import MMEBModel
 from src.trainer import GradCacheLateProcessTrainer
 from src.utils import print_rank
 from src.model_utils import load_processor, get_backbone_name
+import os
+from huggingface_hub import login
 
 
 logger = logging.getLogger(__name__)
@@ -66,7 +68,7 @@ def main():
     trainer.save_model(training_args.output_dir)
 
     if trainer.is_world_process_zero():
-        processor.save_pretrained(training_args.output_dir)
+        trainer.push_to_hub("Phi-3.5-vision-test")
 
 
 if __name__ == "__main__":

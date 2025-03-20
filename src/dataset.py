@@ -39,7 +39,6 @@ class TrainTextImageDataset(Dataset):
             subset_data = load_dataset(self.data_args.dataset_name, subset, split=data_args.split_name)
             train_data.append(subset_data[0])
         self.train_data = concatenate_datasets(train_data)
-        print (self[0])
 
     def __len__(self):
         return len(self.train_data)
@@ -56,6 +55,8 @@ class TrainTextImageDataset(Dataset):
             return image
 
     def __getitem__(self, data_idx) -> Tuple[str, List[str]]:
+        print (self.train_data.column_names)
+        print (111)
         qry_texts, qry_image_paths, pos_texts, pos_image_paths = (
             self.train_data[data_idx]["qry"], self.train_data[data_idx]["qry_image_path"],
             self.train_data[data_idx]["pos_text"], self.train_data[data_idx]["pos_image_path"]

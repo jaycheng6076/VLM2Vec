@@ -20,6 +20,7 @@ from huggingface_hub import login
 
 
 logger = logging.getLogger(__name__)
+torch.cuda.set_device(0)
 
 
 def main():

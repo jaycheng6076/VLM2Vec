@@ -39,6 +39,7 @@ class TrainTextImageDataset(Dataset):
             subset_data = load_dataset(self.data_args.dataset_name, subset, split=data_args.split_name)
             train_data.append(subset_data[0])
         self.train_data = concatenate_datasets(train_data)
+        print (self[0])
 
     def __len__(self):
         return len(self.train_data)

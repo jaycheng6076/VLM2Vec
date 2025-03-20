@@ -189,6 +189,7 @@ class TrainTextImageDataCollator:
     def _get_batch_inputs(self, examples, text_keyname, image_keyname):
         texts, images = [], []
         for example in examples:
+            print (example)
             # @ruimeng filter invalid data examples here will lead to fail to sync across devices (unequal batch size)
             # use dummy input for now
             if example is None or not example:

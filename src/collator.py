@@ -181,6 +181,8 @@ class TrainTextImageDataCollator:
         """
         :param examples: qry, qry_image, pos_text, pos_image
         """
+        print (examples)
+        print (type(examples))
         qry_inputs = self._get_batch_inputs(examples, "query_text", "query_image")
         pos_inputs = self._get_batch_inputs(examples, "pos_text", "pos_image")
         neg_inputs = self._get_batch_inputs(examples, "neg_text", "neg_image")

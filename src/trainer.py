@@ -66,7 +66,7 @@ class MMEBTrainer(Trainer):
         self.processor = self.processing_class
         self._dist_loss_scale_factor = dist.get_world_size() if self.is_ddp else 1
         # make sure it contains all the keys defined in the output of src.dataset.TrainTextImageDataset
-        self._signature_columns = ['query_text', 'query_image', 'target_text', 'target_image', 'label_ids', 'label']
+        self._signature_columns = ['query_text', 'query_image', 'target_text', 'target_image', 'label_ids', 'label', 'pos_text', 'neg_text', 'pos_image', 'neg_image']
 
     def compute_loss(self, model, inputs, *args, **kwargs):
         qry_inputs, tgt_inputs = inputs

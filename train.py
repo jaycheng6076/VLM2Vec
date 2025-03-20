@@ -20,8 +20,8 @@ from huggingface_hub import login
 
 
 logger = logging.getLogger(__name__)
-torch.cuda.set_device(0)
 
+torch.cuda.set_device("cuda:0")
 
 def main():
     # a hack for torch.distributed.launch: https://github.com/huggingface/transformers/issues/22171

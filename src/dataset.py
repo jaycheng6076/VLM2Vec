@@ -55,8 +55,6 @@ class TrainTextImageDataset(Dataset):
             return image
 
     def __getitem__(self, data_idx) -> Tuple[str, List[str]]:
-        print (self.train_data.column_names)
-        print (111)
         qry_texts, qry_image_paths, pos_texts, pos_image_paths = (
             self.train_data[data_idx]["qry"], self.train_data[data_idx]["qry_image_path"],
             self.train_data[data_idx]["pos_text"], self.train_data[data_idx]["pos_image_path"]
@@ -64,7 +62,7 @@ class TrainTextImageDataset(Dataset):
         if 'neg_text' in self.train_data.column_names:
             neg_texts, neg_image_paths = self.train_data[data_idx]["neg_text"], self.train_data[data_idx]["neg_image_path"]
         else:
-            neg_texts, neg_image_paths = [''] * len(data_idx), [] * len(data_idx)
+            neg_texts, neg_image_paths = [''], []
         if isinstance(data_idx, int):
             qry_texts = [qry_texts]
             qry_image_paths = [qry_image_paths]

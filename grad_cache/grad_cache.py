@@ -258,7 +258,7 @@ class GradCache:
         """
         all_reps = []
         all_rnd_states = []
-
+        no_sync_except_last = False
         if no_sync_except_last:
             assert all(map(lambda m: isinstance(m, nn.parallel.DistributedDataParallel), self.models)), \
                 'Some of models are not wrapped in DistributedDataParallel. Make sure you are running DDP with ' \

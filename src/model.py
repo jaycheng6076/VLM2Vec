@@ -88,6 +88,7 @@ class MMEBModel(nn.Module):
             )
         elif model_backbone in [QWEN2_VL, QWEN2_5_VL]:
             config._attn_implementation = "flash_attention_2"
+            config._attn_implementation = "eager"
             config.padding_side = "left"
             config.use_cache = False
             base_model = backbone2model[model_backbone].from_pretrained(
@@ -144,6 +145,8 @@ class MMEBModel(nn.Module):
         if model_args.model_backbone in {LLAVA_NEXT, QWEN2_VL, QWEN2_5_VL}:
             config._attn_implementation = "flash_attention_2"
             config.vision_config._attn_implementation = "flash_attention_2"
+            config._attn_implementation = "eager"
+            config.vision_config._attn_implementation = "eager"
             base_model = backbone2model[model_args.model_backbone].from_pretrained(
                 model_args.model_name,
                 torch_dtype=torch.bfloat16,

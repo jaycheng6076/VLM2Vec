@@ -186,6 +186,8 @@ class MMEBModel(nn.Module):
         self.encoder.save_pretrained(output_dir)
 
     def forward(self, qry: Dict[str, Tensor] = None, tgt: Dict[str, Tensor] = None, *args, **kwargs):
+        qry = qry.to("cuda:0")
+        tgt = tgt.to("cuda:0")
         qry_reps = self.encode_input(qry) if qry else None  # (bsz_per_device, dim)
         tgt_reps = self.encode_input(tgt) if tgt else None # (bsz_per_device, dim)
 

@@ -50,8 +50,12 @@ class MMEBModel(nn.Module):
                 # Get the vectors at the last 1 position of each attention mask
                 reps = last_hidden_state[
                     torch.arange(batch_size, device=last_hidden_state.device), eos_indices]
-        else:
-            raise NotImplementedError
+        elif self.pooling = "average":
+            # last hidden: (batch_size, sequence_length, hidden_size)
+            # mask: (batch_size, sequence_length)
+            attention_mask = attention_mask.unsqueeze(-1)
+            masked_hidden = last_hidden_state * attention_mask
+            reps = masked_hidden.sum(dim=1) / attention_mask.sum(dim=1)
         if self.normalize:
             reps = torch.nn.functional.normalize(reps, p=2, dim=-1)
         return reps

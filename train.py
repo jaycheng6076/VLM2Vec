@@ -55,6 +55,7 @@ def main():
     collator = TrainTextImageDataCollator(data_args, model_args, processor)
 
     trainer_cls = GradCacheLateProcessTrainer
+    model = model.to("cuda:0")
     trainer = trainer_cls(
         model=model,
         processing_class=processor,

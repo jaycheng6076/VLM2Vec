@@ -32,12 +32,13 @@ class MMEBModel(nn.Module):
             self.world_size = dist.get_world_size()
 
     def encode_input(self, input):
-        hidden_states = self.encoder(**input, return_dict=True, output_hidden_states=True)
-        hidden_states = hidden_states.hidden_states[-1]
+        hidden_states = self.encoder.generate(**input, return_dict_in_generate=True, output_hidden_states=True, max_new_tokens=1, early_stopping=True)
+        hidden_states = hidden_states.hidden_states[-1][-1]
         pooled_output = self._pooling(hidden_states, input['attention_mask'])
         return pooled_output
 
     def _pooling(self, last_hidden_state, attention_mask):
+        """
         if self.pooling == 'last' or self.pooling == 'eos':
             left_padding = (attention_mask[:, -1].sum() == attention_mask.shape[0])
             batch_size = last_hidden_state.shape[0]
@@ -52,6 +53,8 @@ class MMEBModel(nn.Module):
                     torch.arange(batch_size, device=last_hidden_state.device), eos_indices]
         else:
             raise NotImplementedError
+        """
+        reps = last_hidden_state.squeeze()
         if self.normalize:
             reps = torch.nn.functional.normalize(reps, p=2, dim=-1)
         return reps

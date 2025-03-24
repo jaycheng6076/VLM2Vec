@@ -72,7 +72,7 @@ class MMEBModel(nn.Module):
         # Loading the base model
         if model_backbone == PHI3V:
             config._attn_implementation = "eager"
-            config.padding_side = "right"
+            config.padding_side = "left"
             config.use_cache = False
             base_model = Phi3VForCausalLM.from_pretrained(
                 model_args.model_name,
@@ -157,10 +157,10 @@ class MMEBModel(nn.Module):
             config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)
             config.use_cache = False
             config._attn_implementation = "eager"
-            config.padding_side = "right"
+            config.padding_side = "left"
             base_model = Phi3VForCausalLM.from_pretrained(model_args.model_name, **kwargs, config=config,
                                                           torch_dtype=torch.bfloat16, trust_remote_code=True)
-            base_model.padding_side = "right"
+            base_model.padding_side = "left"
         else:
             # Loading external base model from HF
             config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)

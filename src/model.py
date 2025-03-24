@@ -32,6 +32,10 @@ class MMEBModel(nn.Module):
             self.world_size = dist.get_world_size()
 
     def encode_input(self, input):
+        if "texts" in input:
+            del input["texts"]
+        if "images" in input:
+            del input["images"]
         hidden_states = self.encoder.generate(**input, return_dict_in_generate=True, output_hidden_states=True, max_new_tokens=1, early_stopping=True)
         hidden_states = hidden_states.hidden_states[-1][-1]
         pooled_output = self._pooling(hidden_states, input['attention_mask'])

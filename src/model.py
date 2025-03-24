@@ -103,7 +103,6 @@ class MMEBModel(nn.Module):
             config.use_cache = False
             base_model = cls.TRANSFORMER_CLS.from_pretrained(
                 model_args.model_name, **kwargs, config=config,
-                attn_implementation="flash_attention_2",
                 attn_implementation="eager",
                 torch_dtype=torch.bfloat16,
                 trust_remote_code=False)
@@ -157,6 +156,7 @@ class MMEBModel(nn.Module):
             # Loading the base model
             config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=False)
             config.use_cache = False
+            config._attn_implementation = "eager"
             config.padding_side = "right"
             base_model = Phi3VForCausalLM.from_pretrained(model_args.model_name, **kwargs, config=config,
                                                           torch_dtype=torch.bfloat16, trust_remote_code=False)

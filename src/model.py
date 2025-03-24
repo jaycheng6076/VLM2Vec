@@ -65,7 +65,7 @@ class MMEBModel(nn.Module):
 
     @classmethod
     def build(cls, model_args: ModelArguments, training_args: TrainingArguments=None, **kwargs):
-        config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=False)
+        config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)
         model_backbone = get_backbone_name(hf_config=config)
         setattr(model_args, 'model_backbone', model_backbone)
         print_master(f'Loading backbone [{model_backbone}]')
@@ -105,7 +105,7 @@ class MMEBModel(nn.Module):
                 model_args.model_name, **kwargs, config=config,
                 attn_implementation="eager",
                 torch_dtype=torch.bfloat16,
-                trust_remote_code=False)
+                trust_remote_code=True)
 
         if model_args.lora:
             print_master(f'Loading lora adapter from {base_model}')
@@ -139,7 +139,7 @@ class MMEBModel(nn.Module):
     def load(cls, model_args: ModelArguments, **kwargs):
         # Loading the base model
         checkpoint_path = model_args.checkpoint_path if model_args.checkpoint_path else model_args.model_name
-        config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=False)
+        config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)
         model_backbone = get_backbone_name(hf_config=config)
         setattr(model_args, 'model_backbone', model_backbone)
         print_master(f'Loading backbone [{model_backbone}]')
@@ -154,12 +154,12 @@ class MMEBModel(nn.Module):
             )
         elif model_args.model_backbone == PHI3V:
             # Loading the base model
-            config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=False)
+            config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)
             config.use_cache = False
             config._attn_implementation = "eager"
             config.padding_side = "right"
             base_model = Phi3VForCausalLM.from_pretrained(model_args.model_name, **kwargs, config=config,
-                                                          torch_dtype=torch.bfloat16, trust_remote_code=False)
+                                                          torch_dtype=torch.bfloat16, trust_remote_code=True)
             base_model.padding_side = "right"
         else:
             # Loading external base model from HF

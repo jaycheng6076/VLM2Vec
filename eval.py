@@ -15,12 +15,14 @@ import pickle
 import os
 from datasets import load_dataset
 from evaluation.eval_utils import get_pred
-from src.utils import print_rank
-from src.model_utils import get_backbone_name
+
+
 
 def batch_to_device(batch, device):
     _batch = {}
     for key, value in batch.items():
+        if key in ["texts", "images"]:
+            continue
         if isinstance(value, torch.Tensor):
             _batch[key] = value.to(device)
         else:
@@ -48,11 +50,6 @@ def main():
         num_crops=model_args.num_crops,
     )
 
-    hf_config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)
-    model_backbone = get_backbone_name(hf_config=hf_config)
-    setattr(model_args, 'model_backbone', model_backbone)
-    setattr(training_args, 'model_backbone', model_backbone)
-    print_rank(f'model_backbone: {model_backbone}')
     model = MMEBModel.load(model_args)
     model.eval()
     model = model.to(training_args.device, dtype=torch.bfloat16)

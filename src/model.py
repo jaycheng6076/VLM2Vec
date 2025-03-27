@@ -3,7 +3,8 @@ import torch
 import torch.distributed as dist
 from torch import nn, Tensor
 from transformers import PreTrainedModel, AutoModelForCausalLM, AutoTokenizer
-from transformers import LlavaNextForConditionalGeneration, Qwen2VLForConditionalGeneration
+from transformers import LlavaNextForConditionalGeneration
+from src.vlm_backbone.qwen2_vl import Qwen2VLForConditionalGeneration
 from collections import defaultdict
 
 CAUSAL_OUTPUTVALUES = ["avg_gen_layer", "avg_ppt_layer", "avg_all_layer", "fst_gen_layer", "last_gen_layer"]
@@ -36,11 +37,14 @@ class MMEBModel(nn.Module):
             self.filter_ids  = list(filter_ids)
 
         self.generation_configs = {
-            "temperature": 0.6,
+            "temperature": temperature,
             "top_p": 0.9,
             "max_new_tokens": 40,
             "do_sample": True
         }
+        if self.tokenizer.pad_token_id == None:
+            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+            self.generation_configs['pad_token_id'] = self.tokenizer.eos_token_id
 
 
     def get_all_output_values(self) -> list[str]:
@@ -133,18 +137,17 @@ class MMEBModel(nn.Module):
                 embeddings["avg_gen_layer"].append(torch.cat([prompt_hidden_states_remove_pad[-1:, :], generation_hidden_states], dim=0).mean(0).cpu())
                 embeddings["last_gen_layer"].append(generation_hidden_states[-1, :].cpu())
             
-        embeddings["avg_ppt_layer"] = torch.stack(embeddings["avg_ppt_layer" + str(layer_id)], dim=0)
-        embeddings["fst_gen_layer"] = torch.stack(embeddings["fst_gen_layer" + str(layer_id)], dim=0)
-        embeddings["avg_all_layer"] = torch.stack(embeddings["avg_all_layer" + str(layer_id)], dim=0)
-        embeddings["avg_gen_layer"] = torch.stack(embeddings["avg_gen_layer" + str(layer_id)], dim=0)
-        embeddings["last_gen_layer"] = torch.stack(embeddings["last_gen_layer" + str(layer_id)], dim=0)
-        
+        embeddings["avg_ppt_layer"] = torch.stack(embeddings["avg_ppt_layer"], dim=0)
+        embeddings["fst_gen_layer"] = torch.stack(embeddings["fst_gen_layer"], dim=0)
+        embeddings["avg_all_layer"] = torch.stack(embeddings["avg_all_layer"], dim=0)
+        embeddings["avg_gen_layer"] = torch.stack(embeddings["avg_gen_layer"], dim=0)
+        embeddings["last_gen_layer"] = torch.stack(embeddings["last_gen_layer"], dim=0)
 
         return embeddings
 
 
     @classmethod
-    def load(cls, **kwargs):
+    def load(cls, model_args, **kwargs):
         # Loading the base model
         """
         base_model = LlavaNextForConditionalGeneration.from_pretrained("llava-hf/llava-v1.6-mistral-7b-hf", 
@@ -156,14 +159,14 @@ class MMEBModel(nn.Module):
             torch_dtype="auto",
             device_map="cuda" if torch.cuda.is_available() else "cpu",                                                              
             low_cpu_mem_usage=True)
-        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-VL-2B-Instruct")
+        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", padding_side='left', truncation_side="left")
 
         model = cls(
                 encoder=encoder,
                 tokenizer=tokenizer,
-                pooling="avg_gen_layer",
+                pooling=model_args.pooling,
                 normalize=True,
-                temperature=0.7
+                temperature=model_args.temperature,
             )
 
         return model

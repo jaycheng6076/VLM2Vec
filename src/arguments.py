@@ -22,7 +22,7 @@ class ModelArguments:
         default=None, metadata={"help": "a local model path"}
     )
     pooling: str = field(
-        default='last',
+        default='avg_ppt_layer',
         metadata={"help": "pooling method for encoder"}
     )
     normalize: bool = field(
@@ -30,7 +30,7 @@ class ModelArguments:
         metadata={"help": "normalize query and passage representations"}
     )
     temperature: float = field(
-        default=0.02,
+        default=0.7,
         metadata={"help": "temperature for softmax"}
     )
     lora: bool = field(

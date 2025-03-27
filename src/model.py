@@ -1,13 +1,12 @@
-from typing import Dict, Optional
+from typing import Optional
 import torch
 import torch.distributed as dist
 from torch import nn, Tensor
-from transformers import PreTrainedModel, AutoModelForCausalLM, AutoConfig
-from peft import LoraConfig, get_peft_model, PeftModel
-from src.arguments import ModelArguments, TrainingArguments
-from src.model_utils import LLAVA_NEXT, QWEN2_VL, PHI3V, get_backbone_name, print_master, QWEN2_5_VL, backbone2model
-from src.vlm_backbone.phi3_v.modeling_phi3_v import Phi3VForCausalLM
-from src.vlm_backbone.llava_next import LlavaNextForConditionalGeneration
+from transformers import PreTrainedModel, AutoModelForCausalLM, AutoTokenizer
+from transformers import LlavaNextForConditionalGeneration, Qwen2VLForConditionalGeneration
+from collections import defaultdict
+
+CAUSAL_OUTPUTVALUES = ["avg_gen_layer", "avg_ppt_layer", "avg_all_layer", "fst_gen_layer", "last_gen_layer"]
 
 
 class MMEBModel(nn.Module):
@@ -15,207 +14,169 @@ class MMEBModel(nn.Module):
 
     def __init__(self,
                  encoder: PreTrainedModel,
+                 tokenizer: AutoTokenizer,
                  pooling: str = 'cls',
                  normalize: bool = False,
                  temperature: float = 1.0,
+                 filter_words: Optional[list[str]] = None,
                  ):
         super().__init__()
         self.config = encoder.config
         self.encoder = encoder
+        self.tokenizer = tokenizer
         self.pooling = pooling
         self.normalize = normalize
         self.temperature = temperature
-        self.cross_entropy = nn.CrossEntropyLoss(reduction='mean')
-        self.is_ddp = dist.is_initialized()
-        if self.is_ddp:
-            self.process_rank = dist.get_rank()
-            self.world_size = dist.get_world_size()
+
+        self.filter_ids = None
+        if filter_words is not None:
+            self.filter_ids  = set()
+            for filter_word in filter_words:
+                filter_ids |= set(self.tokenizer.encode(filter_word))
+            self.filter_ids  = list(filter_ids)
+
+        self.generation_configs = {
+            "temperature": 0.6,
+            "top_p": 0.9,
+            "max_new_tokens": 40,
+            "do_sample": True
+        }
+
+
+    def get_all_output_values(self) -> list[str]:
+        # +1 token embedding
+        num_layers = self.encoder.config.num_hidden_layers + 1
+        all_output_values = []
+        for ov in CAUSAL_OUTPUTVALUES:
+            if ov.endswith("_"):
+                all_output_values.extend([ov+str(l) for l in range(num_layers)])
+            else:
+                all_output_values.append(ov)
+        return all_output_values
+
 
     def encode_input(self, input):
-        hidden_states = self.encoder(**input, return_dict=True, output_hidden_states=True)
-        hidden_states = hidden_states.hidden_states[-1]
-        pooled_output = self._pooling(hidden_states, input['attention_mask'])
-        return pooled_output
+        outputs = self.encoder.generate(**input, **self.generation_configs,
+                                        return_dict_in_generate=True, output_hidden_states=True, output_scores=True)
 
-    def _pooling(self, last_hidden_state, attention_mask):
-        if self.pooling == 'last' or self.pooling == 'eos':
-            left_padding = (attention_mask[:, -1].sum() == attention_mask.shape[0])
-            batch_size = last_hidden_state.shape[0]
-            if left_padding:
-                # Get the vectors at the last position
-                reps = last_hidden_state[torch.arange(batch_size), -1, :]
-            else:
-                # Calculate last 1 position in the original tensor
-                eos_indices = attention_mask.sum(dim=1) - 1
-                # Get the vectors at the last 1 position of each attention mask
-                reps = last_hidden_state[
-                    torch.arange(batch_size, device=last_hidden_state.device), eos_indices]
-        else:
-            raise NotImplementedError
+        #generations = self.tokenizer.batch_decode(outputs['sequences'], skip_special_tokens=True)
+        decoded_ids = outputs['sequences'][:, input['input_ids'].shape[1]:]
+
+        #generations_remove_prompt = self.tokenizer.batch_decode(decoded_ids, skip_special_tokens=True)
+        #all_generations += generations
+
+        hidden_states = outputs["hidden_states"]
+                
+        aggregated = self._aggregate_embeddings(hidden_states, input['attention_mask'], decoded_ids)
+
+
+        output_embeddings = aggregated[self.pooling]
+        
         if self.normalize:
-            reps = torch.nn.functional.normalize(reps, p=2, dim=-1)
-        return reps
+            output_embeddings = torch.nn.functional.normalize(output_embeddings, p=2, dim=1)
+
+        return output_embeddings
+
+
+    def _aggregate_embeddings(self, hidden_states, attention_mask, decoded_ids):
+        """
+        aggregate hidden states for embeddings
+        """
+        embeddings = {}
+
+        # `encoder_hidden_states` is a tuple of layers of hidden states
+        # `decoder_hidden_states` is a tuple of tuple. The first tuple means tokens, while the second means layers.
+        prompt_hidden_states = hidden_states[0]
+
+        # post-process to remove special tokens in decoded sequences
+        # decoding starts from second token
+        # the first hidden state is used to generate second token
+        # because the first token's hidden state is the last hidden state of prompt
+        special_tokens_masks = [self.tokenizer.get_special_tokens_mask(decoded_ids[batch_id][1:], already_has_special_tokens=True) for batch_id in range(len(decoded_ids))]
+        # filter out `self.filter_ids`
+        if self.filter_ids is not None:
+            # the hidden states that are used to predict the next token
+            special_tokens_masks = [
+                [1 if token_id in self.filter_ids else mask[pos] for pos, token_id in enumerate(ids[1:])]
+                for ids, mask in zip(decoded_ids, special_tokens_masks)
+            ]
+            # breakpoint()
+        
+        layer_id = len(prompt_hidden_states) - 1
+   
+        # for layer_id in range(len(prompt_hidden_states)):
+        embeddings["avg_ppt_layer"] = []
+        embeddings["fst_gen_layer"] = []
+        embeddings["avg_all_layer"] = []
+        embeddings["avg_gen_layer"] = []
+        embeddings["last_gen_layer"] = []
+
+        for batch_id in range(len(prompt_hidden_states[layer_id])):
+                # it is left padding
+                prompt_hidden_states_remove_pad = prompt_hidden_states[layer_id][batch_id, attention_mask[batch_id].bool(), :]
+
+                special_tokens_mask = special_tokens_masks[batch_id]
+                if sum(special_tokens_mask) < len(special_tokens_mask):
+                    # breakpoint()
+                    generation_hidden_states = torch.cat([hs[layer_id][batch_id] for hs, special_token in zip(hidden_states[1:], special_tokens_mask) if not special_token], dim=0)
+                else:
+                    # if all of them are special token, then there is a problem
+                    generation_hidden_states = hidden_states[1][layer_id][batch_id]
+
+                all_hidden_states = torch.cat([prompt_hidden_states_remove_pad, generation_hidden_states], dim=0)
+
+                # embeddings["avg_ppt_layer"].append(prompt_hidden_states_remove_pad.mean(0).cpu())
+                embeddings["avg_ppt_layer"].append(prompt_hidden_states_remove_pad[:-1, :].mean(0).cpu())
+                embeddings["fst_gen_layer"].append(prompt_hidden_states_remove_pad[-1, :].cpu())
+                embeddings["avg_all_layer"].append(all_hidden_states.mean(0).cpu())
+                # embeddings["avg_gen_layer")].append(generation_hidden_states.mean(0).cpu())
+                embeddings["avg_gen_layer"].append(torch.cat([prompt_hidden_states_remove_pad[-1:, :], generation_hidden_states], dim=0).mean(0).cpu())
+                embeddings["last_gen_layer"].append(generation_hidden_states[-1, :].cpu())
+            
+        embeddings["avg_ppt_layer"] = torch.stack(embeddings["avg_ppt_layer" + str(layer_id)], dim=0)
+        embeddings["fst_gen_layer"] = torch.stack(embeddings["fst_gen_layer" + str(layer_id)], dim=0)
+        embeddings["avg_all_layer"] = torch.stack(embeddings["avg_all_layer" + str(layer_id)], dim=0)
+        embeddings["avg_gen_layer"] = torch.stack(embeddings["avg_gen_layer" + str(layer_id)], dim=0)
+        embeddings["last_gen_layer"] = torch.stack(embeddings["last_gen_layer" + str(layer_id)], dim=0)
+        
+
+        return embeddings
+
 
     @classmethod
-    def build(cls, model_args: ModelArguments, training_args: TrainingArguments=None, **kwargs):
-        config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)
-        model_backbone = get_backbone_name(hf_config=config)
-        setattr(model_args, 'model_backbone', model_backbone)
-        print_master(f'Loading backbone [{model_backbone}]')
+    def load(cls, **kwargs):
         # Loading the base model
-        if model_backbone == PHI3V:
-            config._attn_implementation = "eager"
-            config.padding_side = "right"
-            config.use_cache = False
-            base_model = Phi3VForCausalLM.from_pretrained(
-                model_args.model_name,
-                config=config,
-                torch_dtype=torch.bfloat16,
-                low_cpu_mem_usage=True,
-            )
-        elif model_backbone == LLAVA_NEXT:
-            config.use_cache = False
-            config.padding_side = "left"
-            base_model = LlavaNextForConditionalGeneration.from_pretrained(
-                model_args.model_name,
-                config=config,
-                torch_dtype=torch.bfloat16,
-                low_cpu_mem_usage=True,
-            )
-        elif model_backbone in [QWEN2_VL, QWEN2_5_VL]:
-            config._attn_implementation = "flash_attention_2"
-            config.padding_side = "left"
-            config.use_cache = False
-            base_model = backbone2model[model_backbone].from_pretrained(
-                model_args.model_name,
-                config=config,
-                torch_dtype=torch.bfloat16,
-                low_cpu_mem_usage=True,
-            )
-        else:
-            config.use_cache = False
-            base_model = cls.TRANSFORMER_CLS.from_pretrained(
-                model_args.model_name, **kwargs, config=config,
-                attn_implementation="flash_attention_2",
-                torch_dtype=torch.bfloat16,
-                trust_remote_code=True)
+        """
+        base_model = LlavaNextForConditionalGeneration.from_pretrained("llava-hf/llava-v1.6-mistral-7b-hf", 
+            torch_dtype=torch.float16, 
+            low_cpu_mem_usage=True)
+        """
 
-        if model_args.lora:
-            print_master(f'Loading lora adapter from {base_model}')
-            lora_config = LoraConfig(
-                r=model_args.lora_r,
-                lora_alpha=model_args.lora_alpha,
-                target_modules=model_args.lora_target_modules.split(','),
-                lora_dropout=model_args.lora_dropout,
-                init_lora_weights="gaussian",
-                use_dora=True,
-                inference_mode=False
-            )
-            lora_model = get_peft_model(base_model, lora_config)
-            model = cls(
-                encoder=lora_model,
-                pooling=model_args.pooling,
-                normalize=model_args.normalize,
-                temperature=model_args.temperature
-            )
-        else:
-            model = cls(
-                encoder=base_model,
-                pooling=model_args.pooling,
-                normalize=model_args.normalize,
-                temperature=model_args.temperature
+        encoder = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", 
+            torch_dtype="auto",
+            device_map="cuda" if torch.cuda.is_available() else "cpu",                                                              
+            low_cpu_mem_usage=True)
+        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-VL-2B-Instruct")
+
+        model = cls(
+                encoder=encoder,
+                tokenizer=tokenizer,
+                pooling="avg_gen_layer",
+                normalize=True,
+                temperature=0.7
             )
 
         return model
 
-    @classmethod
-    def load(cls, model_args: ModelArguments, **kwargs):
-        # Loading the base model
-        checkpoint_path = model_args.checkpoint_path if model_args.checkpoint_path else model_args.model_name
-        config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)
-        model_backbone = get_backbone_name(hf_config=config)
-        setattr(model_args, 'model_backbone', model_backbone)
-        print_master(f'Loading backbone [{model_backbone}]')
-
-        if model_args.model_backbone in {LLAVA_NEXT, QWEN2_VL, QWEN2_5_VL}:
-            config._attn_implementation = "flash_attention_2"
-            config.vision_config._attn_implementation = "flash_attention_2"
-            base_model = backbone2model[model_args.model_backbone].from_pretrained(
-                model_args.model_name,
-                torch_dtype=torch.bfloat16,
-                config=config
-            )
-        elif model_args.model_backbone == PHI3V:
-            # Loading the base model
-            config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)
-            config.use_cache = False
-            config.padding_side = "right"
-            base_model = Phi3VForCausalLM.from_pretrained(model_args.model_name, **kwargs, config=config,
-                                                          torch_dtype=torch.bfloat16, trust_remote_code=True)
-            base_model.padding_side = "right"
-        else:
-            # Loading external base model from HF
-            config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)
-            config.use_cache = False
-            base_model = cls.TRANSFORMER_CLS.from_pretrained(
-                checkpoint_path, **kwargs, config=config,
-                torch_dtype=torch.bfloat16,
-                trust_remote_code=True)
-
-        # Building the model on top of the base
-        if model_args.lora:
-            lora_config = LoraConfig.from_pretrained(checkpoint_path)
-            lora_model = PeftModel.from_pretrained(base_model, checkpoint_path, config=lora_config)
-
-            merged_model = lora_model.merge_and_unload()
-            model = cls(
-                encoder=merged_model,
-                pooling=model_args.pooling,
-                normalize=model_args.normalize
-            )
-        else:
-            model = cls(
-                encoder=base_model,
-                pooling=model_args.pooling,
-                normalize=model_args.normalize
-            )
-
-        return model
 
     def save(self, output_dir: str):
         self.encoder.save_pretrained(output_dir)
 
-    def forward(self, qry: Dict[str, Tensor] = None, tgt: Dict[str, Tensor] = None, *args, **kwargs):
+    def forward(self, qry: dict[str, Tensor] = None, tgt: dict[str, Tensor] = None, *args, **kwargs):
         qry_reps = self.encode_input(qry) if qry else None  # (bsz_per_device, dim)
         tgt_reps = self.encode_input(tgt) if tgt else None # (bsz_per_device, dim)
+        return {"qry_reps": qry_reps, "tgt_reps": tgt_reps}
 
-        if qry_reps is None or tgt_reps is None:
-            return {"qry_reps": qry_reps, "tgt_reps": tgt_reps}
-
-        if self.is_ddp:
-            all_qry_reps = self._dist_gather_tensor(qry_reps)
-            all_tgt_reps = self._dist_gather_tensor(tgt_reps)
-        else:
-            all_qry_reps = qry_reps
-            all_tgt_reps = tgt_reps
-
-        scores = self.compute_similarity(all_qry_reps, all_tgt_reps)
-        scores = scores.view(all_qry_reps.size(0), -1)
-        target = torch.arange(scores.size(0), device=scores.device, dtype=torch.long)
-        target = target * (all_qry_reps.size(0) // all_tgt_reps.size(0))
-        loss = self.cross_entropy(scores / self.temperature, target)
-        if self.is_ddp:
-            loss = loss * self.world_size
-
-        return loss
-
-    def _dist_gather_tensor(self, t: Tensor):
-        t = t.contiguous()
-        all_tensors = [torch.empty_like(t) for _ in range(self.world_size)]
-        dist.all_gather(all_tensors, t)
-        all_tensors[self.process_rank] = t
-        all_tensors = torch.cat(all_tensors, dim=0)
-        return all_tensors
 
     def compute_similarity(self, q_reps, p_reps):
         return torch.matmul(q_reps, p_reps.transpose(0, 1))

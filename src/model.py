@@ -160,7 +160,7 @@ class MMEBModel(nn.Module):
         """
         config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)
         if model_args.model_backbone in {LLAVA_NEXT, QWEN2_VL, QWEN2_5_VL}:
-            config._attn_implementation = "flash_attention" if torch.cuda.is_available() else "eager"
+            config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
             config.vision_config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
 
             encoder = backbone2model[model_args.model_backbone].from_pretrained(
@@ -172,7 +172,7 @@ class MMEBModel(nn.Module):
         elif model_args.model_backbone == PHI3V:
             # Loading the base model
             config.use_cache = False
-            config._attn_implementation = "flash_attention" if torch.cuda.is_available() else "eager"
+            config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
             config.padding_side = "left"
             print (config)
             encoder = Phi3VForCausalLM.from_pretrained(model_args.model_name, **kwargs, config=config,
@@ -183,7 +183,7 @@ class MMEBModel(nn.Module):
                 model_args.model_name, 
                 **kwargs, 
                 config=config,
-                attn_implementation="flash_attention" if torch.cuda.is_available() else "eager",
+                attn_implementation="flash_attention_2" if torch.cuda.is_available() else "eager",
                 torch_dtype=torch.bfloat16,
                 trust_remote_code=True)
         

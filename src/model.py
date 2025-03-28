@@ -5,6 +5,7 @@ from torch import nn, Tensor
 from transformers import PreTrainedModel, AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from transformers import LlavaNextForConditionalGeneration
 from src.vlm_backbone.qwen2_vl import Qwen2VLForConditionalGeneration
+from src.vlm_backbone.phi3_v.modeling_phi3_v import Phi3VForCausalLM
 from collections import defaultdict
 from src.model_utils import LLAVA_NEXT, QWEN2_VL, PHI3V, get_backbone_name, print_master, QWEN2_5_VL, backbone2model
 
@@ -160,13 +161,21 @@ class MMEBModel(nn.Module):
         if model_args.model_backbone in {LLAVA_NEXT, QWEN2_VL, QWEN2_5_VL}:
             config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
             config.vision_config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
-            print (config)
+
             encoder = backbone2model[model_args.model_backbone].from_pretrained(
                 model_args.model_name,
                 torch_dtype=torch.bfloat16,
                 config=config,
                 low_cpu_mem_usage=True
             )
+        elif model_args.model_backbone == PHI3V:
+            # Loading the base model
+            config.use_cache = False
+            config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
+            config.padding_side = "left"
+            encoder = Phi3VForCausalLM.from_pretrained(model_args.model_name, **kwargs, config=config,
+                                                          torch_dtype=torch.bfloat16, trust_remote_code=True)
+            encoder.padding_side = "left"
         else:
             encoder = AutoModelForCausalLM.from_pretrained(
                 model_args.model_name, 

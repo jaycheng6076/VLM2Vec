@@ -83,7 +83,7 @@ class MMEBModel(nn.Module):
                 low_cpu_mem_usage=True,
             )
         elif model_backbone in [QWEN2_VL, QWEN2_5_VL]:
-            config._attn_implementation = "flash_attention_2"
+            config._attn_implementation = "flash_attention_2" 
             config.padding_side = "left"
             config.use_cache = False
             base_model = backbone2model[model_backbone].from_pretrained(
@@ -138,8 +138,8 @@ class MMEBModel(nn.Module):
         print_master(f'Loading backbone [{model_backbone}]')
 
         if model_args.model_backbone in {LLAVA_NEXT, QWEN2_VL, QWEN2_5_VL}:
-            config._attn_implementation = "flash_attention_2"
-            config.vision_config._attn_implementation = "flash_attention_2"
+            config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
+            config.vision_config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
             base_model = backbone2model[model_args.model_backbone].from_pretrained(
                 model_args.model_name,
                 torch_dtype=torch.bfloat16,
@@ -163,18 +163,7 @@ class MMEBModel(nn.Module):
                 trust_remote_code=True)
 
         # Building the model on top of the base
-        if model_args.lora:
-            lora_config = LoraConfig.from_pretrained(checkpoint_path)
-            lora_model = PeftModel.from_pretrained(base_model, checkpoint_path, config=lora_config)
-
-            merged_model = lora_model.merge_and_unload()
-            model = cls(
-                encoder=merged_model,
-                pooling=model_args.pooling,
-                normalize=model_args.normalize
-            )
-        else:
-            model = cls(
+        model = cls(
                 encoder=base_model,
                 pooling=model_args.pooling,
                 normalize=model_args.normalize

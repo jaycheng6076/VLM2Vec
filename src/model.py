@@ -28,7 +28,6 @@ class MMEBModel(nn.Module):
         self.config = encoder.config
         self.encoder = encoder
         self.tokenizer = tokenizer
-        self.tokenizer.padding_side = 'left'
         self.pooling = pooling
         self.normalize = normalize
         self.temperature = temperature
@@ -172,7 +171,7 @@ class MMEBModel(nn.Module):
         elif model_args.model_backbone == PHI3V:
             # Loading the base model
             config.use_cache = False
-            config._attn_implementation = "eager" if torch.cuda.is_available() else "eager"
+            config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
             config.padding_side = "left"
             print (config)
             encoder = Phi3VForCausalLM.from_pretrained(model_args.model_name, **kwargs, config=config,

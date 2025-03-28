@@ -1,16 +1,13 @@
 from typing import Optional
 import torch
-import torch.distributed as dist
 from torch import nn, Tensor
 from transformers import PreTrainedModel, AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from transformers import LlavaNextForConditionalGeneration
-from src.vlm_backbone.qwen2_vl import Qwen2VLForConditionalGeneration
 from src.vlm_backbone.phi3_v.modeling_phi3_v import Phi3VForCausalLM
-from collections import defaultdict
-from src.model_utils import LLAVA_NEXT, QWEN2_VL, PHI3V, get_backbone_name, print_master, QWEN2_5_VL, backbone2model
+from src.model_utils import LLAVA_NEXT, QWEN2_VL, PHI3V, QWEN2_5_VL, backbone2model
 
 
-CAUSAL_OUTPUTVALUES = ["avg_gen_layer", "avg_ppt_layer", "avg_all_layer", "fst_gen_layer", "last_gen_layer"]
+CAUSAL_OUTPUTVALUES = ["avg_gen_layer", "avg_ppt_layer", "avg_all_layer", "fst_gen_layer", "last_gen_layer", "avg_gen_layer_without_first", "avg_ppt_layer_with_last"]
 
 
 class MMEBModel(nn.Module):
@@ -19,7 +16,6 @@ class MMEBModel(nn.Module):
     def __init__(self,
                  encoder: PreTrainedModel,
                  tokenizer: AutoTokenizer,
-                 pooling: str = 'cls',
                  normalize: bool = False,
                  temperature: float = 1.0,
                  filter_words: Optional[list[str]] = None,
@@ -28,9 +24,9 @@ class MMEBModel(nn.Module):
         self.config = encoder.config
         self.encoder = encoder
         self.tokenizer = tokenizer
-        self.pooling = pooling
         self.normalize = normalize
         self.temperature = temperature
+        print ("Normalize: ", self.normalize)
 
         self.filter_ids = None
         if filter_words is not None:
@@ -76,13 +72,7 @@ class MMEBModel(nn.Module):
                 
         aggregated = self._aggregate_embeddings(hidden_states, input['attention_mask'], decoded_ids)
 
-
-        output_embeddings = aggregated[self.pooling]
-        
-        if self.normalize:
-            output_embeddings = torch.nn.functional.normalize(output_embeddings, p=2, dim=1)
-
-        return output_embeddings
+        return aggregated
 
 
     def _aggregate_embeddings(self, hidden_states, attention_mask, decoded_ids):
@@ -117,6 +107,8 @@ class MMEBModel(nn.Module):
         embeddings["avg_all_layer"] = []
         embeddings["avg_gen_layer"] = []
         embeddings["last_gen_layer"] = []
+        embeddings["avg_gen_layer_without_first"] = []
+        embeddings["avg_ppt_layer_with_last"] = []
 
         for batch_id in range(len(prompt_hidden_states[layer_id])):
                 # it is left padding
@@ -132,19 +124,25 @@ class MMEBModel(nn.Module):
 
                 all_hidden_states = torch.cat([prompt_hidden_states_remove_pad, generation_hidden_states], dim=0)
 
-                # embeddings["avg_ppt_layer"].append(prompt_hidden_states_remove_pad.mean(0).cpu())
+                embeddings["avg_ppt_layer_with_last"].append(prompt_hidden_states_remove_pad.mean(0).cpu())
                 embeddings["avg_ppt_layer"].append(prompt_hidden_states_remove_pad[:-1, :].mean(0).cpu())
                 embeddings["fst_gen_layer"].append(prompt_hidden_states_remove_pad[-1, :].cpu())
                 embeddings["avg_all_layer"].append(all_hidden_states.mean(0).cpu())
-                # embeddings["avg_gen_layer")].append(generation_hidden_states.mean(0).cpu())
+                embeddings["avg_gen_layer_without_first"].append(generation_hidden_states.mean(0).cpu())
                 embeddings["avg_gen_layer"].append(torch.cat([prompt_hidden_states_remove_pad[-1:, :], generation_hidden_states], dim=0).mean(0).cpu())
                 embeddings["last_gen_layer"].append(generation_hidden_states[-1, :].cpu())
             
+        embeddings["avg_ppt_layer_with_last"] = torch.stack(embeddings["avg_ppt_layer_with_last"], dim=0)
         embeddings["avg_ppt_layer"] = torch.stack(embeddings["avg_ppt_layer"], dim=0)
         embeddings["fst_gen_layer"] = torch.stack(embeddings["fst_gen_layer"], dim=0)
         embeddings["avg_all_layer"] = torch.stack(embeddings["avg_all_layer"], dim=0)
+        embeddings["avg_gen_layer_without_first"] = torch.stack(embeddings["avg_gen_layer_without_first"], dim=0)
         embeddings["avg_gen_layer"] = torch.stack(embeddings["avg_gen_layer"], dim=0)
         embeddings["last_gen_layer"] = torch.stack(embeddings["last_gen_layer"], dim=0)
+
+        if self.normalize:
+            for key in embeddings:
+                embeddings[key] = torch.nn.functional.normalize(embeddings[key], p=2, dim=1)
 
         return embeddings
 
@@ -173,10 +171,8 @@ class MMEBModel(nn.Module):
             config.use_cache = False
             config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
             config.padding_side = "left"
-            print (config)
             encoder = Phi3VForCausalLM.from_pretrained(model_args.model_name, **kwargs, config=config,
                                                     torch_dtype=torch.bfloat16, trust_remote_code=True)
-            encoder.padding_side = "left"
         else:
             encoder = AutoModelForCausalLM.from_pretrained(
                 model_args.model_name, 
@@ -192,16 +188,12 @@ class MMEBModel(nn.Module):
         model = cls(
                 encoder=encoder,
                 tokenizer=tokenizer,
-                pooling=model_args.pooling,
-                normalize=True,
+                normalize=model_args.normalize,
                 temperature=model_args.temperature,
             )
 
         return model
 
-
-    def save(self, output_dir: str):
-        self.encoder.save_pretrained(output_dir)
 
     def forward(self, qry: dict[str, Tensor] = None, tgt: dict[str, Tensor] = None, *args, **kwargs):
         qry_reps = self.encode_input(qry) if qry else None  # (bsz_per_device, dim)
@@ -209,5 +201,3 @@ class MMEBModel(nn.Module):
         return {"qry_reps": qry_reps, "tgt_reps": tgt_reps}
 
 
-    def compute_similarity(self, q_reps, p_reps):
-        return torch.matmul(q_reps, p_reps.transpose(0, 1))

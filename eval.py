@@ -4,7 +4,7 @@ import sys
 from src.arguments import ModelArguments, DataArguments, TrainingArguments
 from transformers import HfArgumentParser, AutoProcessor, AutoConfig
 
-from src.model import MMEBModel
+from src.model import MMEBModel, CAUSAL_OUTPUTVALUES
 from src.dataset import EvalDataset
 from src.collator import EvalCollator
 from torch.utils.data import DataLoader
@@ -16,6 +16,7 @@ import os
 from datasets import load_dataset
 from evaluation.eval_utils import get_pred
 from src.model_utils import get_backbone_name
+from collections import defaultdict
 
 
 def batch_to_device(batch, device):
@@ -66,6 +67,7 @@ def main():
 
     # ToDo: This part of code is a little bit hacky. Need to refactor later.
     for idx, subset in enumerate(data_args.subset_name):
+        """
         score_path = os.path.join(data_args.encode_output_path, f"{subset}_score.json")
         if os.path.exists(score_path):
             try:
@@ -81,6 +83,10 @@ def main():
         encode_tgt_path = os.path.join(data_args.encode_output_path, f"{subset}_tgt")
         if os.path.exists(encode_qry_path) and os.path.exists(encode_tgt_path):
             continue
+        """
+
+        encode_qry_path = os.path.join(data_args.encode_output_path, f"{subset}_qry")
+        encode_tgt_path = os.path.join(data_args.encode_output_path, f"{subset}_tgt")
 
         eval_qry_dataset = EvalDataset(
             data_args=data_args,
@@ -114,24 +120,29 @@ def main():
             num_workers=training_args.dataloader_num_workers,
         )
 
-        encoded_tensor = []
+        encoded_tensor = defaultdict(list)
         with torch.no_grad():
             for batch in tqdm(eval_qry_loader, desc="Encode query"):
                 batch = batch_to_device(batch, training_args.device)
                 with torch.autocast(enabled=True, dtype=torch.bfloat16, device_type="cuda" if torch.cuda.is_available() else "cpu"):
                     output = model(qry=batch)
-                encoded_tensor.append(output["qry_reps"].cpu().detach().float().numpy())
-        encoded_tensor = np.concatenate(encoded_tensor)
+                for causal_value in CAUSAL_OUTPUTVALUES:
+                    encoded_tensor[causal_value].append(output["qry_reps"][causal_value].cpu().detach().float().numpy())
+
+        for causal_value in CAUSAL_OUTPUTVALUES:
+            encoded_tensor[causal_value] = np.concatenate(encoded_tensor[causal_value])
         with open(encode_qry_path, 'wb') as f:
             pickle.dump((encoded_tensor, eval_qry_dataset.paired_data), f)
 
-        encoded_tensor = []
+        encoded_tensor = defaultdict(list)
         with torch.no_grad():
             for batch in tqdm(eval_tgt_loader, desc="Encode target"):
                 batch = batch_to_device(batch, training_args.device)
                 output = model(tgt=batch)
-                encoded_tensor.append(output["tgt_reps"].cpu().detach().float().numpy())
-        encoded_tensor = np.concatenate(encoded_tensor)
+                for causal_value in CAUSAL_OUTPUTVALUES:
+                    encoded_tensor[causal_value].append(output["tgt_reps"][causal_value].cpu().detach().float().numpy())
+        for causal_value in CAUSAL_OUTPUTVALUES:
+            encoded_tensor[causal_value] = np.concatenate(encoded_tensor[causal_value])
         with open(encode_tgt_path, 'wb') as f:
             pickle.dump((encoded_tensor, eval_tgt_dataset.paired_data), f)
 
@@ -142,41 +153,45 @@ def main():
             qry_tensor, qry_index = pickle.load(f)
         with open(encode_tgt_path, 'rb') as f:
             tgt_tensor, tgt_index = pickle.load(f)
-        qry_dict, tgt_dict = {}, {}
-        for qry_t, tt in zip(qry_tensor, qry_index):
-            text, img_path = tt["text"], tt["img_path"]
-            qry_dict[(text, img_path)] = qry_t
-        for tgt_t, tt in zip(tgt_tensor, tgt_index):
-            text, img_path = tt["text"], tt["img_path"]
-            tgt_dict[(text, img_path)] = tgt_t
 
-        eval_data = load_dataset(
-            data_args.dataset_name,
-            subset,
-            split=data_args.dataset_split,
-        )
-        n_correct = 0
-        all_pred = []
-        for row in eval_data:
-            qry_t = qry_dict[(row["qry_text"], row["qry_img_path"])]  # (dim,)
-            tgt_t, all_candidates = [], []
-            for tt in zip(row["tgt_text"], row["tgt_img_path"]):
-                tgt_t.append(tgt_dict[tt])
-                all_candidates.append(tt)
-            tgt_t = np.stack(tgt_t, axis=0)  # (num_candidate, dim)
-            scores, pred = get_pred(qry_t, tgt_t, normalization=model_args.normalize)
-            if pred == 0:
-                n_correct += 1
-            all_pred.append(all_candidates[pred])
-        with open(os.path.join(data_args.encode_output_path, f"{subset}_pred.txt"), "w") as f:
-            for item in all_pred:
-                f.write(f"{item}\n")
-        score_path = os.path.join(data_args.encode_output_path, f"{subset}_score.json")
-        print(f"Outputting final score to: {score_path}")
-        with open(score_path, "w") as f:
-            score_dict = {"acc": n_correct/len(eval_data), "num_correct": n_correct, "num_pred": len(eval_data)}
-            json.dump(score_dict, f, indent=4)
-        print(f"\033[91m{subset} accuracy: {n_correct/len(eval_data)}\033[0m")
+        for causal_value in CAUSAL_OUTPUTVALUES:
+            qry_tensor_causal = qry_tensor[causal_value]
+            tgt_tensor_causal = tgt_tensor[causal_value]
+            qry_dict, tgt_dict = {}, {}
+            for qry_t, tt in zip(qry_tensor_causal, qry_index):
+               text, img_path = tt["text"], tt["img_path"]
+               qry_dict[(text, img_path)] = qry_t
+            for tgt_t, tt in zip(tgt_tensor_causal, tgt_index):
+                text, img_path = tt["text"], tt["img_path"]
+                tgt_dict[(text, img_path)] = tgt_t
+
+            eval_data = load_dataset(
+                data_args.dataset_name,
+                subset,
+                split=data_args.dataset_split,
+             )
+            n_correct = 0
+            all_pred = []
+            for row in eval_data:
+                qry_t = qry_dict[(row["qry_text"], row["qry_img_path"])]  # (dim,)
+                tgt_t, all_candidates = [], []
+                for tt in zip(row["tgt_text"], row["tgt_img_path"]):
+                    tgt_t.append(tgt_dict[tt])
+                    all_candidates.append(tt)
+                tgt_t = np.stack(tgt_t, axis=0)  # (num_candidate, dim)
+                _, pred = get_pred(qry_t, tgt_t, normalization=model_args.normalize)
+                if pred == 0:
+                    n_correct += 1
+                all_pred.append(all_candidates[pred])
+            with open(os.path.join(data_args.encode_output_path, f"{subset}_{causal_value}_pred.txt"), "w") as f:
+                for item in all_pred:
+                    f.write(f"{item}\n")
+            score_path = os.path.join(data_args.encode_output_path, f"{subset}_{causal_value}_score.json")
+            print(f"Outputting final score to: {score_path}")
+            with open(score_path, "w") as f:
+                score_dict = {"acc": n_correct/len(eval_data), "num_correct": n_correct, "num_pred": len(eval_data)}
+                json.dump(score_dict, f, indent=4)
+            print(f"\033[91m{subset} {causal_value} accuracy: {n_correct/len(eval_data)}\033[0m")
 
 
 if __name__ == "__main__":

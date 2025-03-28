@@ -2,10 +2,12 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 from torch import nn, Tensor
-from transformers import PreTrainedModel, AutoModelForCausalLM, AutoTokenizer
+from transformers import PreTrainedModel, AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from transformers import LlavaNextForConditionalGeneration
 from src.vlm_backbone.qwen2_vl import Qwen2VLForConditionalGeneration
 from collections import defaultdict
+from src.model_utils import LLAVA_NEXT, QWEN2_VL, PHI3V, get_backbone_name, print_master, QWEN2_5_VL, backbone2model
+
 
 CAUSAL_OUTPUTVALUES = ["avg_gen_layer", "avg_ppt_layer", "avg_all_layer", "fst_gen_layer", "last_gen_layer"]
 
@@ -154,12 +156,27 @@ class MMEBModel(nn.Module):
             torch_dtype=torch.float16, 
             low_cpu_mem_usage=True)
         """
-
-        encoder = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", 
-            torch_dtype="auto",
-            device_map="cuda" if torch.cuda.is_available() else "cpu",                                                              
-            low_cpu_mem_usage=True)
-        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", padding_side='left', truncation_side="left")
+        config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)
+        if model_args.model_backbone in {LLAVA_NEXT, QWEN2_VL, QWEN2_5_VL}:
+            config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
+            config.vision_config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
+            print (config)
+            encoder = backbone2model[model_args.model_backbone].from_pretrained(
+                model_args.model_name,
+                torch_dtype=torch.bfloat16,
+                config=config,
+                low_cpu_mem_usage=True
+            )
+        else:
+            encoder = AutoModelForCausalLM.from_pretrained(
+                model_args.model_name, 
+                **kwargs, 
+                config=config,
+                attn_implementation="flash_attention_2" if torch.cuda.is_available() else "eager",
+                torch_dtype=torch.bfloat16,
+                trust_remote_code=True)
+        
+        tokenizer = AutoTokenizer.from_pretrained(model_args.model_name, padding_side='left', truncation_side="left")
 
         model = cls(
                 encoder=encoder,

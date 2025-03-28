@@ -15,7 +15,7 @@ import pickle
 import os
 from datasets import load_dataset
 from evaluation.eval_utils import get_pred
-
+from src.model_utils import get_backbone_name
 
 
 def batch_to_device(batch, device):
@@ -49,6 +49,9 @@ def main():
         trust_remote_code=True,
         num_crops=model_args.num_crops,
     )
+    hf_config = AutoConfig.from_pretrained(model_args.model_name, trust_remote_code=True)
+    model_backbone = get_backbone_name(hf_config=hf_config)
+    setattr(model_args, 'model_backbone', model_backbone)
 
     model = MMEBModel.load(model_args)
     model.eval()
@@ -114,7 +117,7 @@ def main():
         with torch.no_grad():
             for batch in tqdm(eval_qry_loader, desc="Encode query"):
                 batch = batch_to_device(batch, training_args.device)
-                with torch.autocast(enabled=True, dtype=torch.bfloat16, device_type="cuda"):
+                with torch.autocast(enabled=True, dtype=torch.bfloat16, device_type="cuda" if torch.cuda.is_available() else "cpu"):
                     output = model(qry=batch)
                 encoded_tensor.append(output["qry_reps"].cpu().detach().float().numpy())
         encoded_tensor = np.concatenate(encoded_tensor)

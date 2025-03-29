@@ -198,7 +198,8 @@ def Phi3V_process_fn(model_inputs: dict, processor, max_length=None):
 
 def mllama_process_fn(model_inputs: dict, processor, max_length=None):
     texts, images = model_inputs['text'], model_inputs['image']
-    inputs = processor(text=texts, images=[[image] for image in images], return_tensors="pt", max_length=max_length, truncation=True)
+    inputs = processor(text=texts, images=[[image] for image in images], return_tensors="pt", max_length=max_length,
+                       text_kwargs = {"padding": "max_length", "truncation": True},)
     return inputs
 
 def Qwen2_VL_process_fn(model_inputs: dict, processor, max_length=None):

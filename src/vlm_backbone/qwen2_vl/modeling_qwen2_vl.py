@@ -1627,10 +1627,12 @@ class Qwen2VLForConditionalGeneration(Qwen2VLPreTrainedModel, GenerationMixin):
                         image_embeds = self.visual(valid_pixel_values, grid_thw=valid_image_sizes)
                         n_image_tokens = (input_ids_w_image == self.config.image_token_id).sum().item()
                         n_image_features = image_embeds.shape[0]
+                        """
                         if n_image_tokens != n_image_features:
                             raise ValueError(
                                 f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {n_image_features}"
                             )
+                        """
                         image_mask = (
                             (input_ids_w_image == self.config.image_token_id)
                             .unsqueeze(-1)

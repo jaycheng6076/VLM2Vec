@@ -173,7 +173,7 @@ class MMEBModel(nn.Module):
             encoder = Phi3VForCausalLM.from_pretrained(model_args.model_name, **kwargs, config=config,
                                                     torch_dtype=torch.bfloat16, trust_remote_code=True)
         elif model_args.model_backbone == MLLAMA:
-            config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
+            config._attn_implementation = "eager"
             encoder = MllamaForConditionalGeneration.from_pretrained(model_args.model_name, **kwargs, config=config,
                                                     torch_dtype=torch.bfloat16, trust_remote_code=True)
         else:

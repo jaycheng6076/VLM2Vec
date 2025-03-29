@@ -38,7 +38,7 @@ class MMEBModel(nn.Module):
             "temperature": temperature,
             "top_p": 0.9,
             "max_new_tokens": 40,
-            "do_sample": True
+            "do_sample": False
         }
         if self.tokenizer.pad_token_id == None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id

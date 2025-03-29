@@ -7,6 +7,7 @@ from src.vlm_backbone.llava_next import LlavaNextForConditionalGeneration
 from src.vlm_backbone.phi3_v.modeling_phi3_v import Phi3VForCausalLM
 from src.vlm_backbone.qwen2_5_vl import Qwen2_5_VLForConditionalGeneration
 from src.vlm_backbone.qwen2_vl import Qwen2VLForConditionalGeneration
+from transformers import MllamaForConditionalGeneration
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +19,13 @@ PHI3V = 'phi3_v'
 LLAVA_NEXT = 'llava_next'
 QWEN2_VL = 'qwen2_vl'
 QWEN2_5_VL = 'qwen2_5_vl'
+MLLAMA = 'mllama'
 MODEL2BACKBONE = {  # keys are from hf_config.model_type
     'phi3_v': PHI3V,
     'llava_next': LLAVA_NEXT,
     'qwen2_vl': QWEN2_VL,
     'qwen2_5_vl': QWEN2_5_VL,
+    'mllama': MLLAMA,
 }
 SUPPORTED_MODELS = set(MODEL2BACKBONE.keys())
 
@@ -31,6 +34,7 @@ vlm_image_tokens = {
     LLAVA_NEXT: "<image>",
     QWEN2_VL: "<|image_pad|>",
     QWEN2_5_VL: "<|image_pad|>",
+    MLLAMA: "<|image|>"
 }
 
 backbone2model = {
@@ -38,6 +42,7 @@ backbone2model = {
     LLAVA_NEXT: LlavaNextForConditionalGeneration,
     QWEN2_VL: Qwen2VLForConditionalGeneration,
     QWEN2_5_VL: Qwen2_5_VLForConditionalGeneration,
+    MLLAMA: MllamaForConditionalGeneration
 }
 
 def load_processor(model_args):
@@ -191,6 +196,10 @@ def Phi3V_process_fn(model_inputs: dict, processor, max_length=None):
 
     return inputs
 
+def mllama_process_fn(model_inputs: dict, processor, max_length=None):
+    texts, images = model_inputs['text'], model_inputs['image']
+    inputs = processor(text=texts, images=[[image] for image in images], return_tensors="pt", max_length=max_length, truncation=True)
+    return inputs
 
 def Qwen2_VL_process_fn(model_inputs: dict, processor, max_length=None):
     input_ids, pixel_values, image_sizes, image_grid_thw = [], [], [], []
@@ -250,4 +259,5 @@ process_vlm_inputs_fns = {
     LLAVA_NEXT: Llava_NEXT_process_fn,
     QWEN2_VL: Qwen2_VL_process_fn,
     QWEN2_5_VL: Qwen2_VL_process_fn,
+    MLLAMA: mllama_process_fn,
 }

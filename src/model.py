@@ -2,9 +2,9 @@ from typing import Optional
 import torch
 from torch import nn, Tensor
 from transformers import PreTrainedModel, AutoModelForCausalLM, AutoTokenizer, AutoConfig
-from transformers import LlavaNextForConditionalGeneration
+from transformers import LlavaNextForConditionalGeneration, MllamaForConditionalGeneration
 from src.vlm_backbone.phi3_v.modeling_phi3_v import Phi3VForCausalLM
-from src.model_utils import LLAVA_NEXT, QWEN2_VL, PHI3V, QWEN2_5_VL, backbone2model
+from src.model_utils import LLAVA_NEXT, QWEN2_VL, PHI3V, QWEN2_5_VL, MLLAMA, backbone2model
 
 
 CAUSAL_OUTPUTVALUES = ["avg_gen_layer", "avg_ppt_layer", "avg_all_layer", "fst_gen_layer", "last_gen_layer", "avg_gen_layer_without_first", "avg_ppt_layer_with_last"]
@@ -26,7 +26,6 @@ class MMEBModel(nn.Module):
         self.tokenizer = tokenizer
         self.normalize = normalize
         self.temperature = temperature
-        print ("Normalize: ", self.normalize)
 
         self.filter_ids = None
         if filter_words is not None:
@@ -172,6 +171,10 @@ class MMEBModel(nn.Module):
             config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
             config.padding_side = "left"
             encoder = Phi3VForCausalLM.from_pretrained(model_args.model_name, **kwargs, config=config,
+                                                    torch_dtype=torch.bfloat16, trust_remote_code=True)
+        elif model_args.model_backbone == MLLAMA:
+            config._attn_implementation = "flash_attention_2" if torch.cuda.is_available() else "eager"
+            encoder = MllamaForConditionalGeneration.from_pretrained(model_args.model_name, **kwargs, config=config,
                                                     torch_dtype=torch.bfloat16, trust_remote_code=True)
         else:
             encoder = AutoModelForCausalLM.from_pretrained(

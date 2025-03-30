@@ -158,7 +158,7 @@ class EvalDataset(Dataset):
                 if row[text_field]:
                     unique_pair.add((row[text_field], row[img_path_field]))
                 else:
-                    if isinstance(row[img_path_field], List):
+                    if type(row[img_path_field]) == list:
                         for img_path in row[img_path_field]:
                             unique_pair.add((row[text_field], img_path))
                     else:
